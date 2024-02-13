@@ -41,11 +41,20 @@ int pam_sm_authenticate(pam_handle_t * pamh, int flags, int argc, const char **a
         return PAM_IGNORE;
     }
 
-    // Validate user against the token
-    if (visa_verify_body_and_signature(public_key_file, expiration_in_seconds, user, password)) {
-        syslog(LOG_AUTH|LOG_DEBUG, "pam_visa: Body and signature verified");
+    char * keytype = "ssh-rsa";
+    // Try to validate an RSA SSH key
+    if (visa_verify_body_and_signature(public_key_file, expiration_in_seconds, user, password, keytype)) {
+        syslog(LOG_AUTH|LOG_DEBUG, "pam_visa: Body and signature verified (RSA key)");
         return PAM_SUCCESS;
     }
+
+    keytype = "ssh-ed25519";    
+    // Try to validate an ed25519 SSH key
+    if (visa_verify_body_and_signature_ed25519(public_key_file, expiration_in_seconds, user, password, keytype)) {
+        syslog(LOG_AUTH|LOG_DEBUG, "pam_visa: Body and signature verified (ed25519 key)");
+        return PAM_SUCCESS;
+    }
+
 
     return PAM_IGNORE;
 }

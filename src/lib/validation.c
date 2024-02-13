@@ -38,9 +38,44 @@ int visa_rsa_verify_signature(const char * public_key_filename, unsigned char * 
   int result = EVP_DigestVerifyFinal(rsa_context, message_hash, message_hash_length);
 
   EVP_MD_CTX_destroy(rsa_context);
-
+  EVP_PKEY_free(public_key);
+  fclose(public_key_file);
   return result;
 }
+
+int visa_ed25519_verify_signature(const char * public_key_filename, unsigned char * message_hash, size_t message_hash_length, const char * message, size_t message_length) {
+  FILE * public_key_file = fopen(public_key_filename, "rt");
+
+  if (!public_key_file) {
+    syslog(LOG_AUTH|LOG_DEBUG, "pam_visa: Failed to read ed_25519 public key file");
+    return 0;
+  }
+
+  EVP_PKEY * public_key = PEM_read_PUBKEY(public_key_file, NULL, NULL, NULL);
+
+  if (!public_key) {
+    syslog(LOG_AUTH|LOG_DEBUG, "pam_visa: Failed to decrypt ed_25519 public key");
+    return 0;
+  }
+
+  EVP_MD_CTX * ed25519_context = EVP_MD_CTX_new();
+
+  if (EVP_DigestVerifyInit(ed25519_context, NULL, EVP_ed25519(), NULL, public_key) <= 0) {
+  return 0;
+  }
+
+  if (EVP_DigestVerifyUpdate(ed25519_context, message, message_length) <= 0) {
+    return 0;
+  }
+
+  int result = EVP_DigestVerifyFinal(ed25519_context, message_hash, message_hash_length);
+
+  EVP_MD_CTX_destroy(ed25519_context);
+  EVP_PKEY_free(public_key);
+  fclose(public_key_file);
+  return result;
+}
+
 
 size_t visa_calc_decode_length(const char * b64_input) {
   size_t len = strlen(b64_input), padding = 0;
@@ -70,13 +105,16 @@ void visa_base64_decode(const char * b64_message, unsigned char ** decoded_messa
   BIO_free_all(bio);
 }
 
-int visa_verify_signature(const char * public_key_filename, const char * message, size_t message_length, const char * signature_base64) {
+int visa_verify_signature(const char * public_key_filename, const char * message, size_t message_length, const char * signature_base64, char * keytype) {
   unsigned char* decoded_signature;
   size_t decoded_signature_length;
-
   visa_base64_decode(signature_base64, &decoded_signature, &decoded_signature_length);
-
-  int retval = visa_rsa_verify_signature(public_key_filename, decoded_signature, decoded_signature_length, message, message_length);
+  int retval = 0;
+  if (strcmp(keytype, "ssh-ed25519") == 0) {
+    retval = visa_ed25519_verify_signature(public_key_filename, decoded_signature, decoded_signature_length, message, message_length);
+  } else if (strcmp(keytype, "ssh-rsa") == 0) {
+    retval = visa_rsa_verify_signature(public_key_filename, decoded_signature, decoded_signature_length, message, message_length);
+  }
 
   if (retval == 1) {
     syslog(LOG_AUTH|LOG_DEBUG, "pam_visa: Signature is valid");
@@ -121,7 +159,7 @@ int visa_verify_timestamp_has_not_expired(time_t timestamp, long expiration) {
   return 1;
 }
 
-int visa_verify_body_and_signature(const char * public_key_filename, int expiration_in_seconds, const char * user, const char * body) {
+int visa_verify_body_and_signature(const char * public_key_filename, int expiration_in_seconds, const char * user, const char * body, char * keytype) {
 
   // Verify we have two parts
   size_t delim_position;
@@ -161,6 +199,6 @@ int visa_verify_body_and_signature(const char * public_key_filename, int expirat
 
   free(timestamp_string);
 
-  return visa_verify_signature(public_key_filename, body, message_length, signature_base64);
+  return visa_verify_signature(public_key_filename, body, message_length, signature_base64, keytype);
 }
 
